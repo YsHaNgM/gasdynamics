@@ -3,6 +3,9 @@
 #include <cmath>
 #include <memory>
 #include <algorithm>
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 
 // See README.md for instructions and information.
 
@@ -181,6 +184,6 @@ int main(int const argc, char const *argv[])
 
     // XXX --- Uncomment this line to write density data to stdout. ---
     // XXX --- MPI comms needed here to gather data to root process. ---
-    plot(nel, ndx.get(), elrho.get());
+    // plot(nel, ndx.get(), elrho.get());
     return 0;
 }
