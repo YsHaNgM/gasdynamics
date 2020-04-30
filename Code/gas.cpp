@@ -128,62 +128,62 @@ int main(int const argc, char const *argv[])
                 elein[iel] - 0.5 * dt * (elp[iel] + elq[iel]) * idivu / elm[iel];
             elp[iel] = (GAMMA - 1.0) * ein * rho;
         }
+
+        // XXX --- MPI comms needed here to exchange elp and elq ghosts ---
+
+        // Corrector step to obtain full-step geometry and thermodynamic states.
+        for (int ind = 0; ind < nnd; ind++)
+        {
+            int const iell = ind - 1;
+            int const ielr = ind;
+
+            // Force on node due to neighbour element pressures.
+            double f = 0.0;
+            if (iell >= 0)
+                f += elp[iell] + elq[iell];
+            if (ielr < nel)
+                f -= elp[ielr] + elq[ielr];
+
+            // Calculate a=F/m and apply zero-acceleration boundary conditions.
+            double a = f / std::max(1.0e-40, ndm[ind]);
+            if (ind == 0 || ind == nnd - 1)
+                a = 0.0;
+
+            // XXX --- Need to correctly handle boundaries with MPI decomp. ---
+
+            // Update velocity and position.
+            double const uprev = ndu[ind];
+            ndu[ind] += dt * a;
+            ndubar[ind] = 0.5 * (uprev + ndu[ind]);
+            ndx[ind] += dt * ndubar[ind];
+        }
+
+        for (int iel = 0; iel < nel; iel++)
+        {
+            int const indl = iel;
+            int const indr = iel + 1;
+            elv[iel] = ndx[indr] - ndx[indl];
+
+            double const idivu = ndubar[indr] - ndubar[indl];
+            elein[iel] -= dt * (elp[iel] + elq[iel]) * idivu / elm[iel];
+            elrho[iel] = elm[iel] / elv[iel];
+            elp[iel] = (GAMMA - 1.0) * elein[iel] * elrho[iel];
+        }
+
+        // Step I/O.
+        if (istep % 100 == 0)
+        {
+            char buf[256];
+            std::snprintf(buf, 256, "step=%8d\tt=%12.6e\tdt=%12.6e", istep, t, dt);
+            std::cerr << std::string(buf) << std::endl;
+        }
+
+        t += dt;
+        istep++;
     }
-
-    // XXX --- MPI comms needed here to exchange elp and elq ghosts ---
-
-    // Corrector step to obtain full-step geometry and thermodynamic states.
-    for (int ind = 0; ind < nnd; ind++)
-    {
-        int const iell = ind - 1;
-        int const ielr = ind;
-
-        // Force on node due to neighbour element pressures.
-        double f = 0.0;
-        if (iell >= 0)
-            f += elp[iell] + elq[iell];
-        if (ielr < nel)
-            f -= elp[ielr] + elq[ielr];
-
-        // Calculate a=F/m and apply zero-acceleration boundary conditions.
-        double a = f / std::max(1.0e-40, ndm[ind]);
-        if (ind == 0 || ind == nnd - 1)
-            a = 0.0;
-
-        // XXX --- Need to correctly handle boundaries with MPI decomp. ---
-
-        // Update velocity and position.
-        double const uprev = ndu[ind];
-        ndu[ind] += dt * a;
-        ndubar[ind] = 0.5 * (uprev + ndu[ind]);
-        ndx[ind] += dt * ndubar[ind];
-    }
-
-    for (int iel = 0; iel < nel; iel++)
-    {
-        int const indl = iel;
-        int const indr = iel + 1;
-        elv[iel] = ndx[indr] - ndx[indl];
-
-        double const idivu = ndubar[indr] - ndubar[indl];
-        elein[iel] -= dt * (elp[iel] + elq[iel]) * idivu / elm[iel];
-        elrho[iel] = elm[iel] / elv[iel];
-        elp[iel] = (GAMMA - 1.0) * elein[iel] * elrho[iel];
-    }
-
-    // Step I/O.
-    if (istep % 100 == 0)
-    {
-        char buf[256];
-        std::snprintf(buf, 256, "step=%8d\tt=%12.6e\tdt=%12.6e", istep, t, dt);
-        std::cerr << std::string(buf) << std::endl;
-    }
-
-    t += dt;
-    istep++;
 
     // XXX --- Uncomment this line to write density data to stdout. ---
     // XXX --- MPI comms needed here to gather data to root process. ---
-    // plot(nel, ndx.get(), elrho.get());
+    plot(nel, ndx.get(), elrho.get());
     return 0;
 }
