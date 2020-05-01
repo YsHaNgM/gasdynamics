@@ -4,9 +4,13 @@
 #include <iostream>
 #include <limits>
 #include <memory>
+#include <vector>
+#include <mpi.h>
 #ifdef _OPENMP
 #include <omp.h>
 #endif
+
+using ptr = std::unique_ptr<double[]>;
 
 // See README.md for instructions and information.
 
@@ -21,6 +25,23 @@ void plot(int const nel, double const *ndx, double const *el)
     }
 }
 
+// struct wrap
+// {
+//     ptr _ndx;    // node positions
+//     ptr _ndx05;  // half-step node positions
+//     ptr _ndm;    // Lagrangian nodal masses
+//     ptr _ndu;    // nodal velocities
+//     ptr _ndubar; // nodal timestep-average velocities
+//     ptr _elrho;  // cell densities
+//     ptr _elp;    // cell pressures
+//     ptr _elq;    // cell artificial viscosities
+//     ptr _elein;  // cell specific internal energies
+//     ptr _elv;    // cell volumes (lengths)
+//     ptr _elm; 
+//     const double _dt;
+// };
+
+
 int main(int const argc, char const *argv[])
 {
     if (argc != 2)
@@ -34,8 +55,6 @@ int main(int const argc, char const *argv[])
     // 1D mesh with user-specified number of cells, more cells is more accurate.
     const int nel = std::stoi(argv[1]);
     const int nnd = nel + 1;
-
-    using ptr = std::unique_ptr<double[]>;
 
     ptr ndx(new double[nnd]);    // node positions
     ptr ndx05(new double[nnd]);  // half-step node positions
@@ -64,8 +83,17 @@ int main(int const argc, char const *argv[])
     // XXX --- MPI version needs a 1 cell "ghost layer" for elm, elp and elq ---
 
     // Initialise node positions (equally spaced, x \in [0,1]).
+#ifdef _OPENMP
+#pragma omp parallel firstprivate(nnd, nel)
+    {
+#pragma omp for
+        for (int ind = 0; ind < nnd; ind++)
+            ndx[ind] = (1.0 / nel) * ind;
+    }
+#else
     for (int ind = 0; ind < nnd; ind++)
         ndx[ind] = (1.0 / nel) * ind;
+#endif
 
     // Initial conditions for Sod's shock tube (left and right states).
     for (int iel = 0; iel < nel; iel++)
@@ -152,6 +180,10 @@ int main(int const argc, char const *argv[])
 
         // Predict half-step geometry and calculate pressure.
 
+        int rank = 0;
+        int size = 0;
+        MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+        MPI_Comm_size(MPI_COMM_WORLD, &size);
 
         for (int ind = 0; ind < nnd; ind++)
         {
