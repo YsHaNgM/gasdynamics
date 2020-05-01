@@ -4,12 +4,13 @@ project(gasdynamics)
 
 
 option(USE_OPENMP "Enable OpenMP" ON)
-option(USE_MPI "Enable OpenMP" ON)
+option(USE_MPI "Enable MPI" ON)
 
 
 
 set(CMAKE_CXX_STANDARD 14)
-set(CMAKE_CXX_STANDARD_REQUIRED 1)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
 
 if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Valid options are Release or Debug" FORCE)
@@ -25,7 +26,8 @@ message("CMAKE_SOURCE_DIR=${CMAKE_SOURCE_DIR}")
 message("CMAKE_BINARY_DIR=${CMAKE_BINARY_DIR}")
 
 if(USE_OPENMP)
-    find_package(OpenMP)
+    find_package(OpenMP REQUIRED)
+    list(APPEND ALL_THIRD_PARTY_LIBRARIES PUBLIC OpenMP::OpenMP_CXX)
 else()
     if( (CMAKE_CXX_COMPILER_ID MATCHES "[cC][lL][aA][nN][gG]")
             OR (CMAKE_CXX_COMPILER_ID MATCHES "[gG][nN][uU]"))

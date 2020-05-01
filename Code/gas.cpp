@@ -1,8 +1,9 @@
+#include <algorithm>
+#include <chrono>
+#include <cmath>
 #include <iostream>
 #include <limits>
-#include <cmath>
 #include <memory>
-#include <algorithm>
 #ifdef _OPENMP
 #include <omp.h>
 #endif
@@ -31,8 +32,8 @@ int main(int const argc, char const *argv[])
     double constexpr GAMMA = 1.4; // Material constant.
 
     // 1D mesh with user-specified number of cells, more cells is more accurate.
-    int const nel = std::stoi(argv[1]);
-    int const nnd = nel + 1;
+    const int nel = std::stoi(argv[1]);
+    const int nnd = nel + 1;
 
     using ptr = std::unique_ptr<double[]>;
 
@@ -47,6 +48,18 @@ int main(int const argc, char const *argv[])
     ptr elein(new double[nel]);  // cell specific internal energies
     ptr elv(new double[nel]);    // cell volumes (lengths)
     ptr elm(new double[nel]);    // Lagrangian cell masses
+
+    // double ndx[nnd];
+    // double ndx05[nnd];  // half-step node positions
+    // double ndm[nnd];    // Lagrangian nodal masses
+    // double ndu[nnd];    // nodal velocities
+    // double ndubar[nnd]; // nodal timestep-average velocities
+    // double elrho[nel];  // cell densities
+    // double elp[nel];    // cell pressures
+    // double elq[nel];    // cell artificial viscosities
+    // double elein[nel];  // cell specific internal energies
+    // double elv[nel];    // cell volumes (lengths)
+    // double elm[nel];
 
     // XXX --- MPI version needs a 1 cell "ghost layer" for elm, elp and elq ---
 
@@ -77,7 +90,8 @@ int main(int const argc, char const *argv[])
         ndu[ind] = 0.0;
         ndm[ind] = 0.5 * (elm[iell] + elm[ielr]);
     }
-
+    std::clock_t c_start = std::clock();
+    auto t_start = std::chrono::high_resolution_clock::now();
     // Main timestepping loop, t \in [0,0.25]. Use an explicit finite element
     // discretisation to solve the compressible Euler equations.
     int istep = 1;
@@ -86,6 +100,30 @@ int main(int const argc, char const *argv[])
     {
         // Calculate artificial viscosity (Q) and minimum CFL condition.
         double min_cfl = std::numeric_limits<double>::max();
+#ifdef _OPENMP
+#pragma omp parallel shared(ndu, elein, elrho, elv, elq, min_cfl), firstprivate(GAMMA, nel)
+        {
+#pragma omp for reduction(min:min_cfl) schedule(static)
+            for (int iel = 0; iel < nel; iel++)
+            {
+                int const indl = iel;
+                int const indr = iel + 1;
+
+                // Scalar Q (unlimited).
+                double const du = std::min(ndu[indr] - ndu[indl], 0.0);
+                double const c2 = GAMMA * (GAMMA - 1.0) * elein[iel];
+                elq[iel] = 0.75 * elrho[iel] * du * du +
+                           0.5 * elrho[iel] * std::sqrt(c2) * std::fabs(du);
+
+                // CFL condition (with Q correction to sound speed).
+                double const c2_corr = c2 + 2.0 * elq[iel];
+                double const cfl = elv[iel] / std::max(1.0e-40, std::sqrt(c2_corr));
+                min_cfl = std::min(min_cfl, cfl);
+
+                // XXX --- Need to reduce min_cfl over OpenMP threads ---
+            }
+        }
+#else
         for (int iel = 0; iel < nel; iel++)
         {
             int const indl = iel;
@@ -104,6 +142,7 @@ int main(int const argc, char const *argv[])
 
             // XXX --- Need to reduce min_cfl over OpenMP threads ---
         }
+#endif
 
         // Get timestep.
 
@@ -112,6 +151,8 @@ int main(int const argc, char const *argv[])
         // XXX --- MPI comms needed here to get global min. timestep ---
 
         // Predict half-step geometry and calculate pressure.
+
+
         for (int ind = 0; ind < nnd; ind++)
         {
             ndx05[ind] = ndx[ind] + 0.5 * dt * ndu[ind];
@@ -181,9 +222,16 @@ int main(int const argc, char const *argv[])
         t += dt;
         istep++;
     }
-
+    std::clock_t c_end = std::clock();
+    auto t_end = std::chrono::high_resolution_clock::now();
+    std::cout << "Original code time usage." << std::endl;
+    std::cout << std::fixed << "CPU time used: "
+              << 1000.0 * (c_end - c_start) / CLOCKS_PER_SEC << " ms\n"
+              << "Wall clock time passed: "
+              << std::chrono::duration<double, std::milli>(t_end - t_start).count()
+              << " ms\n";
     // XXX --- Uncomment this line to write density data to stdout. ---
     // XXX --- MPI comms needed here to gather data to root process. ---
-    plot(nel, ndx.get(), elrho.get());
+    // plot(nel, ndx.get(), elrho.get());
     return 0;
 }
