@@ -1,16 +1,15 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstddef>
 #include <iostream>
 #include <limits>
 #include <memory>
-#include <vector>
 #include <mpi.h>
+#include <vector>
 #ifdef _OPENMP
 #include <omp.h>
 #endif
-
-using ptr = std::unique_ptr<double[]>;
 
 // See README.md for instructions and information.
 
@@ -25,24 +24,30 @@ void plot(int const nel, double const *ndx, double const *el)
     }
 }
 
-// struct wrap
-// {
-//     ptr _ndx;    // node positions
-//     ptr _ndx05;  // half-step node positions
-//     ptr _ndm;    // Lagrangian nodal masses
-//     ptr _ndu;    // nodal velocities
-//     ptr _ndubar; // nodal timestep-average velocities
-//     ptr _elrho;  // cell densities
-//     ptr _elp;    // cell pressures
-//     ptr _elq;    // cell artificial viscosities
-//     ptr _elein;  // cell specific internal energies
-//     ptr _elv;    // cell volumes (lengths)
-//     ptr _elm; 
-//     const double _dt;
-// };
+struct Wrap
+{
+    double *_ndx;    // node positions
+    double *_ndx05;  // half-step node positions
+    double *_ndm;    // Lagrangian nodal masses
+    double *_ndu;    // nodal velocities
+    double *_ndubar; // nodal timestep-average velocities
+    double *_elrho;  // cell densities
+    double *_elp;    // cell pressures
+    double *_elq;    // cell artificial viscosities
+    double *_elein;  // cell specific internal energies
+    double *_elv;    // cell volumes (lengths)
+    double *_elm;
+    double _dt;
+    int _nel;
+    int _nnd;
+    int indStart; //index start
+    int indEnd;   //index end
+};
 
+void distributeData(Wrap &, Wrap *&, const int);
+void releaseData(Wrap *&, const int);
 
-int main(int const argc, char const *argv[])
+int main(int argc, char *argv[])
 {
     if (argc != 2)
     {
@@ -56,6 +61,8 @@ int main(int const argc, char const *argv[])
     const int nel = std::stoi(argv[1]);
     const int nnd = nel + 1;
 
+    using ptr = std::unique_ptr<double[]>;
+
     ptr ndx(new double[nnd]);    // node positions
     ptr ndx05(new double[nnd]);  // half-step node positions
     ptr ndm(new double[nnd]);    // Lagrangian nodal masses
@@ -67,6 +74,20 @@ int main(int const argc, char const *argv[])
     ptr elein(new double[nel]);  // cell specific internal energies
     ptr elv(new double[nel]);    // cell volumes (lengths)
     ptr elm(new double[nel]);    // Lagrangian cell masses
+    Wrap origin;
+    origin._ndx = ndx.release();
+    origin._ndx05 = ndx05.release();
+    origin._ndm = ndm.release();
+    origin._ndu = ndu.release();
+    origin._ndubar = ndubar.release();
+    origin._elrho = elrho.release();
+    origin._elp = elp.release();
+    origin._elq = elq.release();
+    origin._elein = elein.release();
+    origin._elv = elv.release();
+    origin._elm = elm.release();
+    origin._nel = nel;
+    origin._nnd = nnd;
 
     // double ndx[nnd];
     // double ndx05[nnd];  // half-step node positions
@@ -82,18 +103,19 @@ int main(int const argc, char const *argv[])
 
     // XXX --- MPI version needs a 1 cell "ghost layer" for elm, elp and elq ---
 
+    std::clock_t c_start = std::clock();
+    auto t_start = std::chrono::high_resolution_clock::now();
+    // MPI_Init(&argc, &argv);
+    // int rank = 0;
+    // int size = 0;
+    // MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    // MPI_Comm_size(MPI_COMM_WORLD, &size);
+    // Wrap wrap[size];
+
     // Initialise node positions (equally spaced, x \in [0,1]).
-#ifdef _OPENMP
-#pragma omp parallel firstprivate(nnd, nel)
-    {
-#pragma omp for
-        for (int ind = 0; ind < nnd; ind++)
-            ndx[ind] = (1.0 / nel) * ind;
-    }
-#else
+
     for (int ind = 0; ind < nnd; ind++)
         ndx[ind] = (1.0 / nel) * ind;
-#endif
 
     // Initial conditions for Sod's shock tube (left and right states).
     for (int iel = 0; iel < nel; iel++)
@@ -118,8 +140,7 @@ int main(int const argc, char const *argv[])
         ndu[ind] = 0.0;
         ndm[ind] = 0.5 * (elm[iell] + elm[ielr]);
     }
-    std::clock_t c_start = std::clock();
-    auto t_start = std::chrono::high_resolution_clock::now();
+
     // Main timestepping loop, t \in [0,0.25]. Use an explicit finite element
     // discretisation to solve the compressible Euler equations.
     int istep = 1;
@@ -129,10 +150,13 @@ int main(int const argc, char const *argv[])
         // Calculate artificial viscosity (Q) and minimum CFL condition.
         double min_cfl = std::numeric_limits<double>::max();
 #ifdef _OPENMP
-#pragma omp parallel shared(ndu, elein, elrho, elv, elq, min_cfl), firstprivate(GAMMA, nel)
+        omp_set_dynamic(0);
+        int iel;
+#pragma omp parallel shared(ndu, elein, elrho, elv, elq, min_cfl), firstprivate(GAMMA, nel), private(iel), num_threads(2)
         {
-#pragma omp for reduction(min:min_cfl) schedule(static)
-            for (int iel = 0; iel < nel; iel++)
+#pragma omp for reduction(min \
+                          : min_cfl) schedule(static)
+            for (iel = 0; iel < nel; iel++)
             {
                 int const indl = iel;
                 int const indr = iel + 1;
@@ -179,11 +203,6 @@ int main(int const argc, char const *argv[])
         // XXX --- MPI comms needed here to get global min. timestep ---
 
         // Predict half-step geometry and calculate pressure.
-
-        int rank = 0;
-        int size = 0;
-        MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-        MPI_Comm_size(MPI_COMM_WORLD, &size);
 
         for (int ind = 0; ind < nnd; ind++)
         {
@@ -254,6 +273,7 @@ int main(int const argc, char const *argv[])
         t += dt;
         istep++;
     }
+    // MPI_Finalize();
     std::clock_t c_end = std::clock();
     auto t_end = std::chrono::high_resolution_clock::now();
     std::cout << "Original code time usage." << std::endl;
@@ -264,6 +284,54 @@ int main(int const argc, char const *argv[])
               << " ms\n";
     // XXX --- Uncomment this line to write density data to stdout. ---
     // XXX --- MPI comms needed here to gather data to root process. ---
-    // plot(nel, ndx.get(), elrho.get());
+    plot(nel, ndx.get(), elrho.get());
+
+    // delete[] origin._ndx;
+    // delete[] origin._ndx05;
+    // delete[] origin._ndm;
+    // delete[] origin._ndu;
+    // delete[] origin._ndubar;
+    // delete[] origin._elrho;
+    // delete[] origin._elp;
+    // delete[] origin._elq;
+    // delete[] origin._elein;
+    // delete[] origin._elv;
+    // delete[] origin._elm;
     return 0;
+}
+
+void distributeData(Wrap &origin, Wrap *&wraps, const int size)
+{
+    auto blockSize = std::ceil((origin._nnd) / size);
+    for (auto i = 0; i < size - 1; i++)
+    {
+        wraps[i]._ndx = new double[blockSize];
+        wraps[i]._ndx05 = new double[blockSize];
+        wraps[i]._ndm = new double[blockSize];
+        wraps[i]._ndu = new double[blockSize];
+        wraps[i]._ndubar = new double[blockSize];
+        wraps[i]._elrho = new double[blockSize];
+
+        wraps[i]._elein = new double[blockSize];
+        wraps[i]._elv = new double[blockSize];
+
+        if (i == 0)
+        {
+            wraps[i]._elp = new double[blockSize];
+            wraps[i]._elq = new double[blockSize];
+            wraps[i]._elm = new double[blockSize];
+        }
+        else
+        {
+            wraps[i]._elp = new double[blockSize + 1];
+            wraps[i]._elq = new double[blockSize + 1];
+            wraps[i]._elm = new double[blockSize + 1];
+        }
+    }
+    size *blockSize;
+}
+
+void releaseData(Wrap *&wraps, const int size)
+{
+    // delete everything
 }
