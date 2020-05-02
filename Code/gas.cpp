@@ -44,9 +44,6 @@ struct Wrap
     int indEnd;   //index end
 };
 
-void distributeData(Wrap &, Wrap *&, const int);
-void releaseData(Wrap *&, const int);
-
 int main(int argc, char *argv[])
 {
     if (argc != 2)
@@ -74,20 +71,20 @@ int main(int argc, char *argv[])
     ptr elein(new double[nel]);  // cell specific internal energies
     ptr elv(new double[nel]);    // cell volumes (lengths)
     ptr elm(new double[nel]);    // Lagrangian cell masses
-    Wrap origin;
-    origin._ndx = ndx.release();
-    origin._ndx05 = ndx05.release();
-    origin._ndm = ndm.release();
-    origin._ndu = ndu.release();
-    origin._ndubar = ndubar.release();
-    origin._elrho = elrho.release();
-    origin._elp = elp.release();
-    origin._elq = elq.release();
-    origin._elein = elein.release();
-    origin._elv = elv.release();
-    origin._elm = elm.release();
-    origin._nel = nel;
-    origin._nnd = nnd;
+    // Wrap origin;
+    // origin._ndx = ndx.release();
+    // origin._ndx05 = ndx05.release();
+    // origin._ndm = ndm.release();
+    // origin._ndu = ndu.release();
+    // origin._ndubar = ndubar.release();
+    // origin._elrho = elrho.release();
+    // origin._elp = elp.release();
+    // origin._elq = elq.release();
+    // origin._elein = elein.release();
+    // origin._elv = elv.release();
+    // origin._elm = elm.release();
+    // origin._nel = nel;
+    // origin._nnd = nnd;
 
     // double ndx[nnd];
     // double ndx05[nnd];  // half-step node positions
@@ -105,12 +102,21 @@ int main(int argc, char *argv[])
 
     std::clock_t c_start = std::clock();
     auto t_start = std::chrono::high_resolution_clock::now();
-    // MPI_Init(&argc, &argv);
-    // int rank = 0;
-    // int size = 0;
-    // MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-    // MPI_Comm_size(MPI_COMM_WORLD, &size);
+    MPI_Init(&argc, &argv);
+    int rank = 0;
+    int size = 0;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &size);
     // Wrap wrap[size];
+
+    auto blockSize = int(std::ceil(double(nel) / size));
+    unsigned int nelIndexList[size * 2];
+    for (auto i = 0; i < size; i++)
+    {
+        nelIndexList[i * 2 + 1] = blockSize * (i + 1) - 1;
+        nelIndexList[i * 2] = blockSize * i;
+    }
+    nelIndexList[size * 2 - 1] = nel;
 
     // Initialise node positions (equally spaced, x \in [0,1]).
 
@@ -284,7 +290,7 @@ int main(int argc, char *argv[])
               << " ms\n";
     // XXX --- Uncomment this line to write density data to stdout. ---
     // XXX --- MPI comms needed here to gather data to root process. ---
-    plot(nel, ndx.get(), elrho.get());
+    // plot(nel, ndx.get(), elrho.get());
 
     // delete[] origin._ndx;
     // delete[] origin._ndx05;
@@ -298,40 +304,4 @@ int main(int argc, char *argv[])
     // delete[] origin._elv;
     // delete[] origin._elm;
     return 0;
-}
-
-void distributeData(Wrap &origin, Wrap *&wraps, const int size)
-{
-    auto blockSize = std::ceil((origin._nnd) / size);
-    for (auto i = 0; i < size - 1; i++)
-    {
-        wraps[i]._ndx = new double[blockSize];
-        wraps[i]._ndx05 = new double[blockSize];
-        wraps[i]._ndm = new double[blockSize];
-        wraps[i]._ndu = new double[blockSize];
-        wraps[i]._ndubar = new double[blockSize];
-        wraps[i]._elrho = new double[blockSize];
-
-        wraps[i]._elein = new double[blockSize];
-        wraps[i]._elv = new double[blockSize];
-
-        if (i == 0)
-        {
-            wraps[i]._elp = new double[blockSize];
-            wraps[i]._elq = new double[blockSize];
-            wraps[i]._elm = new double[blockSize];
-        }
-        else
-        {
-            wraps[i]._elp = new double[blockSize + 1];
-            wraps[i]._elq = new double[blockSize + 1];
-            wraps[i]._elm = new double[blockSize + 1];
-        }
-    }
-    size *blockSize;
-}
-
-void releaseData(Wrap *&wraps, const int size)
-{
-    // delete everything
 }
