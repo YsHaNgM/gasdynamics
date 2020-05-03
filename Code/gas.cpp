@@ -194,7 +194,14 @@ int main(int argc, char *argv[])
                 else if (rank == i)
                     error = MPI_Recv(&elmGhost, 1, MPI_DOUBLE, i - 1, tag_recv, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
             }
-            ndm[ind] = 0.5 * (elmGhost + elm[ielr]);
+            if (rank != 0)
+            {
+                ndm[ind] = 0.5 * (elmGhost + elm[ielr]);
+            }
+            else
+            {
+                ndm[ind] = 0.5 * (elm[iell] + elm[ielr]);
+            }
         }
         else if (ind == nel) // && rank != size - 1
         {
@@ -207,7 +214,14 @@ int main(int argc, char *argv[])
                 else if (rank == i)
                     error = MPI_Recv(&elmGhost, 1, MPI_DOUBLE, i + 1, tag_recv, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
             }
-            ndm[ind] = 0.5 * (elm[iell] + elmGhost);
+            if (rank != size - 1)
+            {
+                ndm[ind] = 0.5 * (elm[iell] + elmGhost);
+            }
+            else
+            {
+                ndm[ind] = 0.5 * (elm[iell] + elm[ielr]);
+            }
         }
         else
         {
@@ -328,7 +342,10 @@ int main(int argc, char *argv[])
                         error = MPI_Recv(&elqGhost, 1, MPI_DOUBLE, i - 1, tag_recv, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
                     }
                 }
-                f += elpGhost + elqGhost;
+                if (rank != 0)
+                {
+                    f += elpGhost + elqGhost;
+                }
             }
 
             if (ielr < nel)
@@ -351,7 +368,8 @@ int main(int argc, char *argv[])
                         error = MPI_Recv(&elqGhost, 1, MPI_DOUBLE, i + 1, tag_recv, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
                     }
                 }
-                f -= elp[ielr] + elq[ielr];
+                if (rank != size - 1)
+                    f -= elpGhost + elqGhost;
             }
 
             // Calculate a=F/m and apply zero-acceleration boundary conditions.
@@ -434,7 +452,7 @@ int main(int argc, char *argv[])
         }
     }
     MPI_Gatherv(elrho.get(), nel, MPI_DOUBLE, elrhoCollect, counts, disp, MPI_DOUBLE, 0, MPI_COMM_WORLD);
-    std::cout << "up to here" << std::endl;
+    // std::cout << "up to here" << std::endl;
 
     // std::clock_t c_end = std::clock();
     // auto t_end = std::chrono::high_resolution_clock::now();
@@ -446,7 +464,11 @@ int main(int argc, char *argv[])
     //           << " ms\n";
     // XXX --- Uncomment this line to write density data to stdout. ---
     // XXX --- MPI comms needed here to gather data to root process. ---
-    // plot(nel, ndx.get(), elrho.get());
+
+    if (rank == 0)
+    {
+        plot(nelTotal, ndxCollect, elrhoCollect);
+    }
 
     // delete[] origin._ndx;
     // delete[] origin._ndx05;
