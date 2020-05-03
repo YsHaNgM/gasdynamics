@@ -155,7 +155,7 @@ int main(int argc, char *argv[])
     // Initialise node positions (equally spaced, x \in [0,1]).
 
     for (int ind = 0; ind < nnd; ind++)
-        ndx[ind] = (1.0 / nelTotal) * ind + nelIndexes[0];
+        ndx[ind] = (1.0 / nelTotal) * (ind + nelIndexes[0]);
 
     // Initial conditions for Sod's shock tube (left and right states).
     for (int iel = 0; iel < nel; iel++)
@@ -425,7 +425,6 @@ int main(int argc, char *argv[])
         }
         nnd = nnd - 1;
     }
-    std::cout << nel << std::endl;
     MPI_Barrier(MPI_COMM_WORLD);
     MPI_Allgatherv(&nnd, 1, MPI_INT, counts, countCounts, disp, MPI_INT, MPI_COMM_WORLD);
     if (rank == 0)
@@ -446,10 +445,6 @@ int main(int argc, char *argv[])
         {
             disp[i] = counts[i - 1] + disp[i - 1];
         }
-        for (auto i = 0; i < size; i++)
-        {
-            std::cout << counts[i] << std::endl;
-        }
     }
     MPI_Gatherv(elrho.get(), nel, MPI_DOUBLE, elrhoCollect, counts, disp, MPI_DOUBLE, 0, MPI_COMM_WORLD);
     // std::cout << "up to here" << std::endl;
@@ -465,10 +460,10 @@ int main(int argc, char *argv[])
     // XXX --- Uncomment this line to write density data to stdout. ---
     // XXX --- MPI comms needed here to gather data to root process. ---
 
-    if (rank == 0)
-    {
-        plot(nelTotal, ndxCollect, elrhoCollect);
-    }
+    // if (rank == 0)
+    // {
+    //     plot(nelTotal, ndxCollect, elrhoCollect);
+    // }
 
     // delete[] origin._ndx;
     // delete[] origin._ndx05;
