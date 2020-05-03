@@ -62,6 +62,16 @@ int main(int argc, char *argv[])
 
     // 1D mesh with user-specified number of cells, more cells is more accurate.
     const int nelTotal = std::stoi(argv[1]);
+    const int nndTotal = nelTotal + 1;
+    double *ndxCollect = new double[nndTotal];
+    double *elrhoCollect = new double[nelTotal];
+
+    int *counts = new int[size];
+    int *disp = new int[size];
+    int *countCounts = new int[size];
+    std::fill(countCounts, countCounts + size, 1);
+    disp[0] = 0;
+    std::fill(disp + 1, disp + size, 1);
 
     int nelIndexes[2];
     int nelIndexList[size * 2];
@@ -87,7 +97,7 @@ int main(int argc, char *argv[])
                         MPI_COMM_WORLD);
 
     const int nel = nelIndexes[1] - nelIndexes[0] + 1;
-    const int nnd = nel + 1;
+    int nnd = nel + 1;
 
     using ptr = std::unique_ptr<double[]>;
 
@@ -395,9 +405,37 @@ int main(int argc, char *argv[])
 
             delete[] p;
         }
+        nnd = nnd - 1;
     }
+    std::cout << nel << std::endl;
+    MPI_Barrier(MPI_COMM_WORLD);
+    MPI_Allgatherv(&nnd, 1, MPI_INT, counts, countCounts, disp, MPI_INT, MPI_COMM_WORLD);
+    if (rank == 0)
+    {
+        for (auto i = 1; i < size; i++)
+        {
+            disp[i] = counts[i - 1] + disp[i - 1];
+            // std::cout << disp[i] << std::endl;
+        }
+    }
+    MPI_Gatherv(_ndx, nnd, MPI_DOUBLE, ndxCollect, counts, disp, MPI_DOUBLE, 0, MPI_COMM_WORLD);
 
-    MPI_Finalize();
+    std::fill(disp + 1, disp + size, 1);
+    MPI_Allgatherv(&nel, 1, MPI_INT, counts, countCounts, disp, MPI_INT, MPI_COMM_WORLD);
+    if (rank == 0)
+    {
+        for (auto i = 1; i < size; i++)
+        {
+            disp[i] = counts[i - 1] + disp[i - 1];
+        }
+        for (auto i = 0; i < size; i++)
+        {
+            std::cout << counts[i] << std::endl;
+        }
+    }
+    MPI_Gatherv(elrho.get(), nel, MPI_DOUBLE, elrhoCollect, counts, disp, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+    std::cout << "up to here" << std::endl;
+
     // std::clock_t c_end = std::clock();
     // auto t_end = std::chrono::high_resolution_clock::now();
     // std::cout << "Original code time usage." << std::endl;
@@ -421,5 +459,13 @@ int main(int argc, char *argv[])
     // delete[] origin._elein;
     // delete[] origin._elv;
     // delete[] origin._elm;
+    delete[] _ndx;
+    delete[] counts;
+    delete[] disp;
+    delete[] countCounts;
+    delete[] ndxCollect;
+    delete[] elrhoCollect;
+    MPI_Finalize();
+    //Will drop error in macos, has been known as issue #7516 on ompi git repo.
     return 0;
 }
