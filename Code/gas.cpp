@@ -24,28 +24,34 @@ void plot(int const nel, double const *ndx, double const *el)
     }
 }
 
-struct Wrap
-{
-    double *_ndx;    // node positions
-    double *_ndx05;  // half-step node positions
-    double *_ndm;    // Lagrangian nodal masses
-    double *_ndu;    // nodal velocities
-    double *_ndubar; // nodal timestep-average velocities
-    double *_elrho;  // cell densities
-    double *_elp;    // cell pressures
-    double *_elq;    // cell artificial viscosities
-    double *_elein;  // cell specific internal energies
-    double *_elv;    // cell volumes (lengths)
-    double *_elm;
-    double _dt;
-    int _nel;
-    int _nnd;
-    int indStart; //index start
-    int indEnd;   //index end
-};
+// struct Wrap
+// {
+//     double *_ndx;    // node positions
+//     double *_ndx05;  // half-step node positions
+//     double *_ndm;    // Lagrangian nodal masses
+//     double *_ndu;    // nodal velocities
+//     double *_ndubar; // nodal timestep-average velocities
+//     double *_elrho;  // cell densities
+//     double *_elp;    // cell pressures
+//     double *_elq;    // cell artificial viscosities
+//     double *_elein;  // cell specific internal energies
+//     double *_elv;    // cell volumes (lengths)
+//     double *_elm;
+//     double _dt;
+//     int _nel;
+//     int _nnd;
+//     int indStart; //index start
+//     int indEnd;   //index end
+// };
 
 int main(int argc, char *argv[])
 {
+    MPI_Init(&argc, &argv);
+    int rank = 0;
+    int size = 0;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &size);
+
     if (argc != 2)
     {
         std::cerr << "Usage: " << argv[0] << " <num_cells>" << std::endl;
@@ -55,7 +61,32 @@ int main(int argc, char *argv[])
     double constexpr GAMMA = 1.4; // Material constant.
 
     // 1D mesh with user-specified number of cells, more cells is more accurate.
-    const int nel = std::stoi(argv[1]);
+    const int nelTotal = std::stoi(argv[1]);
+
+    int nelIndexes[2];
+    int nelIndexList[size * 2];
+    int error;
+    if (rank == 0)
+    {
+        auto blockSize = int(std::ceil(double(nelTotal) / size));
+
+        for (auto i = 0; i < size; i++)
+        {
+            nelIndexList[i * 2 + 1] = blockSize * (i + 1) - 1;
+            nelIndexList[i * 2] = blockSize * i;
+        }
+        nelIndexList[size * 2 - 1] = nelTotal - 1;
+
+        for (auto i = 0; i < size * 2; i++)
+        {
+            std::cout << nelIndexList[i] << std::endl;
+        }
+    }
+    error = MPI_Scatter((const void *)nelIndexList, 2, MPI_INT,
+                        &nelIndexes, 2, MPI_INT, 0,
+                        MPI_COMM_WORLD);
+
+    const int nel = nelIndexes[1] - nelIndexes[0] + 1;
     const int nnd = nel + 1;
 
     using ptr = std::unique_ptr<double[]>;
@@ -98,30 +129,23 @@ int main(int argc, char *argv[])
     // double elv[nel];    // cell volumes (lengths)
     // double elm[nel];
 
+    double elmSend;
+    double elpSend;
+    double elqSend;
+
+    double elmGhost;
+    double elpGhost;
+    double elqGhost;
+
     // XXX --- MPI version needs a 1 cell "ghost layer" for elm, elp and elq ---
 
-    std::clock_t c_start = std::clock();
-    auto t_start = std::chrono::high_resolution_clock::now();
-    MPI_Init(&argc, &argv);
-    int rank = 0;
-    int size = 0;
-    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-    MPI_Comm_size(MPI_COMM_WORLD, &size);
-    // Wrap wrap[size];
-
-    auto blockSize = int(std::ceil(double(nel) / size));
-    unsigned int nelIndexList[size * 2];
-    for (auto i = 0; i < size; i++)
-    {
-        nelIndexList[i * 2 + 1] = blockSize * (i + 1) - 1;
-        nelIndexList[i * 2] = blockSize * i;
-    }
-    nelIndexList[size * 2 - 1] = nel;
+    // std::clock_t c_start = std::clock();
+    // auto t_start = std::chrono::high_resolution_clock::now();
 
     // Initialise node positions (equally spaced, x \in [0,1]).
 
     for (int ind = 0; ind < nnd; ind++)
-        ndx[ind] = (1.0 / nel) * ind;
+        ndx[ind] = (1.0 / nelTotal) * ind + nelIndexes[0];
 
     // Initial conditions for Sod's shock tube (left and right states).
     for (int iel = 0; iel < nel; iel++)
@@ -136,6 +160,9 @@ int main(int argc, char *argv[])
         elm[iel] = elrho[iel] * elv[iel];
     }
 
+    int tag_send = 0;
+    int tag_recv = tag_send;
+
     // XXX --- MPI comms needed here to handle setting ndm correctly below. ---
 
     for (int ind = 0; ind < nnd; ind++)
@@ -144,7 +171,38 @@ int main(int argc, char *argv[])
         int const ielr = std::min(ind, nel - 1);
 
         ndu[ind] = 0.0;
-        ndm[ind] = 0.5 * (elm[iell] + elm[ielr]);
+        if (ind == 0) //rank != 0 &&
+        {
+            elmSend = elm[nel - 1];
+
+            error = MPI_Barrier(MPI_COMM_WORLD);
+
+            for (auto i = 1; i < size; i++)
+            {
+                if (rank == (i - 1))
+                    error = MPI_Send(&elmSend, 1, MPI_DOUBLE, i, tag_send, MPI_COMM_WORLD);
+                else if (rank == i)
+                    error = MPI_Recv(&elmGhost, 1, MPI_DOUBLE, i - 1, tag_recv, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+            }
+            ndm[ind] = 0.5 * (elmGhost + elm[ielr]);
+        }
+        else if (ind == nel) // && rank != size - 1
+        {
+            elmSend = elm[0];
+            error = MPI_Barrier(MPI_COMM_WORLD);
+            for (auto i = 0; i < size - 1; i++)
+            {
+                if (rank == (i + 1))
+                    error = MPI_Send(&elmSend, 1, MPI_DOUBLE, i, tag_send, MPI_COMM_WORLD);
+                else if (rank == i)
+                    error = MPI_Recv(&elmGhost, 1, MPI_DOUBLE, i + 1, tag_recv, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+            }
+            ndm[ind] = 0.5 * (elm[iell] + elmGhost);
+        }
+        else
+        {
+            ndm[ind] = 0.5 * (elm[iell] + elm[ielr]);
+        }
     }
 
     // Main timestepping loop, t \in [0,0.25]. Use an explicit finite element
@@ -204,9 +262,12 @@ int main(int argc, char *argv[])
 
         // Get timestep.
 
-        dt = std::min({0.25 - dt, dt * 1.02, 0.5 * min_cfl});
+        auto dtLocal = std::min({0.25 - dt, dt * 1.02, 0.5 * min_cfl});
 
         // XXX --- MPI comms needed here to get global min. timestep ---
+
+        error = MPI_Barrier(MPI_COMM_WORLD);
+        error = MPI_Allreduce((const void *)&dtLocal, &dt, 1, MPI_DOUBLE, MPI_MIN, MPI_COMM_WORLD);
 
         // Predict half-step geometry and calculate pressure.
 
@@ -239,12 +300,53 @@ int main(int argc, char *argv[])
             double f = 0.0;
             if (iell >= 0)
                 f += elp[iell] + elq[iell];
+            else
+            {
+                elpSend = elp[nel - 1];
+                elqSend = elq[nel - 1];
+                error = MPI_Barrier(MPI_COMM_WORLD);
+                for (auto i = 1; i < size; i++)
+                {
+                    if (rank == i - 1)
+                    {
+                        error = MPI_Send(&elpSend, 1, MPI_DOUBLE, i, tag_send, MPI_COMM_WORLD);
+                        error = MPI_Send(&elqSend, 1, MPI_DOUBLE, i, tag_send, MPI_COMM_WORLD);
+                    }
+                    else if (rank == i)
+                    {
+                        error = MPI_Recv(&elpGhost, 1, MPI_DOUBLE, i - 1, tag_recv, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+                        error = MPI_Recv(&elqGhost, 1, MPI_DOUBLE, i - 1, tag_recv, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+                    }
+                }
+                f += elpGhost + elqGhost;
+            }
+
             if (ielr < nel)
                 f -= elp[ielr] + elq[ielr];
+            else
+            {
+                elpSend = elp[0];
+                elqSend = elq[0];
+                error = MPI_Barrier(MPI_COMM_WORLD);
+                for (auto i = 0; i < size - 1; i++)
+                {
+                    if (rank == i + 1)
+                    {
+                        error = MPI_Send(&elpSend, 1, MPI_DOUBLE, i, tag_send, MPI_COMM_WORLD);
+                        error = MPI_Send(&elqSend, 1, MPI_DOUBLE, i, tag_send, MPI_COMM_WORLD);
+                    }
+                    else if (rank == i)
+                    {
+                        error = MPI_Recv(&elpGhost, 1, MPI_DOUBLE, i + 1, tag_recv, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+                        error = MPI_Recv(&elqGhost, 1, MPI_DOUBLE, i + 1, tag_recv, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+                    }
+                }
+                f -= elp[ielr] + elq[ielr];
+            }
 
             // Calculate a=F/m and apply zero-acceleration boundary conditions.
             double a = f / std::max(1.0e-40, ndm[ind]);
-            if (ind == 0 || ind == nnd - 1)
+            if ((ind == 0 && rank == 0) || (ind == nnd - 1 && rank == size - 1))
                 a = 0.0;
 
             // XXX --- Need to correctly handle boundaries with MPI decomp. ---
@@ -279,15 +381,31 @@ int main(int argc, char *argv[])
         t += dt;
         istep++;
     }
-    // MPI_Finalize();
-    std::clock_t c_end = std::clock();
-    auto t_end = std::chrono::high_resolution_clock::now();
-    std::cout << "Original code time usage." << std::endl;
-    std::cout << std::fixed << "CPU time used: "
-              << 1000.0 * (c_end - c_start) / CLOCKS_PER_SEC << " ms\n"
-              << "Wall clock time passed: "
-              << std::chrono::duration<double, std::milli>(t_end - t_start).count()
-              << " ms\n";
+
+    auto _ndx = ndx.release();
+    if (rank != size - 1)
+    {
+        if (nnd)
+        {
+            double *p = new double[nnd - 1];
+
+            std::copy(_ndx, _ndx + nnd - 1, p);
+
+            std::swap(_ndx, p);
+
+            delete[] p;
+        }
+    }
+
+    MPI_Finalize();
+    // std::clock_t c_end = std::clock();
+    // auto t_end = std::chrono::high_resolution_clock::now();
+    // std::cout << "Original code time usage." << std::endl;
+    // std::cout << std::fixed << "CPU time used: "
+    //           << 1000.0 * (c_end - c_start) / CLOCKS_PER_SEC << " ms\n"
+    //           << "Wall clock time passed: "
+    //           << std::chrono::duration<double, std::milli>(t_end - t_start).count()
+    //           << " ms\n";
     // XXX --- Uncomment this line to write density data to stdout. ---
     // XXX --- MPI comms needed here to gather data to root process. ---
     // plot(nel, ndx.get(), elrho.get());
