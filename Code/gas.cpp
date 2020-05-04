@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <cassert>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
@@ -10,6 +11,7 @@
 #ifdef _OPENMP
 #include <omp.h>
 #endif
+//#define NDEBUG
 
 // See README.md for instructions and information.
 
@@ -23,26 +25,6 @@ void plot(int const nel, double const *ndx, double const *el)
         std::printf("%12.6e,%12.6e\n", cx, el[iel]);
     }
 }
-
-// struct Wrap
-// {
-//     double *_ndx;    // node positions
-//     double *_ndx05;  // half-step node positions
-//     double *_ndm;    // Lagrangian nodal masses
-//     double *_ndu;    // nodal velocities
-//     double *_ndubar; // nodal timestep-average velocities
-//     double *_elrho;  // cell densities
-//     double *_elp;    // cell pressures
-//     double *_elq;    // cell artificial viscosities
-//     double *_elein;  // cell specific internal energies
-//     double *_elv;    // cell volumes (lengths)
-//     double *_elm;
-//     double _dt;
-//     int _nel;
-//     int _nnd;
-//     int indStart; //index start
-//     int indEnd;   //index end
-// };
 
 int main(int argc, char *argv[])
 {
@@ -63,9 +45,10 @@ int main(int argc, char *argv[])
     // 1D mesh with user-specified number of cells, more cells is more accurate.
     const int nelTotal = std::stoi(argv[1]);
     const int nndTotal = nelTotal + 1;
+
     double *ndxCollect = new double[nndTotal];
     double *elrhoCollect = new double[nelTotal];
-
+    // Prepare some MPI method parameters.
     int *counts = new int[size];
     int *disp = new int[size];
     int *countCounts = new int[size];
@@ -73,7 +56,7 @@ int main(int argc, char *argv[])
     disp[0] = 0;
     std::fill(disp + 1, disp + size, 1);
 
-    int nelIndexes[2];
+    int nelIndexes[2]; //start and end indexes for each process
     int nelIndexList[size * 2];
     int error;
     if (rank == 0)
@@ -87,15 +70,13 @@ int main(int argc, char *argv[])
         }
         nelIndexList[size * 2 - 1] = nelTotal - 1;
 
-        for (auto i = 0; i < size * 2; i++)
-        {
-            std::cout << nelIndexList[i] << std::endl;
-        }
+        // std::clock_t c_start = std::clock();
     }
+    auto t_start = std::chrono::steady_clock::now();
     error = MPI_Scatter((const void *)nelIndexList, 2, MPI_INT,
                         &nelIndexes, 2, MPI_INT, 0,
                         MPI_COMM_WORLD);
-
+    assert(error == MPI_SUCCESS);
     const int nel = nelIndexes[1] - nelIndexes[0] + 1;
     int nnd = nel + 1;
 
@@ -112,32 +93,6 @@ int main(int argc, char *argv[])
     ptr elein(new double[nel]);  // cell specific internal energies
     ptr elv(new double[nel]);    // cell volumes (lengths)
     ptr elm(new double[nel]);    // Lagrangian cell masses
-    // Wrap origin;
-    // origin._ndx = ndx.release();
-    // origin._ndx05 = ndx05.release();
-    // origin._ndm = ndm.release();
-    // origin._ndu = ndu.release();
-    // origin._ndubar = ndubar.release();
-    // origin._elrho = elrho.release();
-    // origin._elp = elp.release();
-    // origin._elq = elq.release();
-    // origin._elein = elein.release();
-    // origin._elv = elv.release();
-    // origin._elm = elm.release();
-    // origin._nel = nel;
-    // origin._nnd = nnd;
-
-    // double ndx[nnd];
-    // double ndx05[nnd];  // half-step node positions
-    // double ndm[nnd];    // Lagrangian nodal masses
-    // double ndu[nnd];    // nodal velocities
-    // double ndubar[nnd]; // nodal timestep-average velocities
-    // double elrho[nel];  // cell densities
-    // double elp[nel];    // cell pressures
-    // double elq[nel];    // cell artificial viscosities
-    // double elein[nel];  // cell specific internal energies
-    // double elv[nel];    // cell volumes (lengths)
-    // double elm[nel];
 
     double elmSend;
     double elpSend;
@@ -148,9 +103,6 @@ int main(int argc, char *argv[])
     double elqGhost;
 
     // XXX --- MPI version needs a 1 cell "ghost layer" for elm, elp and elq ---
-
-    // std::clock_t c_start = std::clock();
-    // auto t_start = std::chrono::high_resolution_clock::now();
 
     // Initialise node positions (equally spaced, x \in [0,1]).
 
@@ -193,6 +145,7 @@ int main(int argc, char *argv[])
                     error = MPI_Send(&elmSend, 1, MPI_DOUBLE, i, tag_send, MPI_COMM_WORLD);
                 else if (rank == i)
                     error = MPI_Recv(&elmGhost, 1, MPI_DOUBLE, i - 1, tag_recv, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+                assert(error == MPI_SUCCESS);
             }
             if (rank != 0)
             {
@@ -213,6 +166,7 @@ int main(int argc, char *argv[])
                     error = MPI_Send(&elmSend, 1, MPI_DOUBLE, i, tag_send, MPI_COMM_WORLD);
                 else if (rank == i)
                     error = MPI_Recv(&elmGhost, 1, MPI_DOUBLE, i + 1, tag_recv, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+                assert(error == MPI_SUCCESS);
             }
             if (rank != size - 1)
             {
@@ -240,7 +194,7 @@ int main(int argc, char *argv[])
 #ifdef _OPENMP
         omp_set_dynamic(0);
         int iel;
-#pragma omp parallel shared(ndu, elein, elrho, elv, elq, min_cfl), firstprivate(GAMMA, nel), private(iel), num_threads(2)
+#pragma omp parallel shared(ndu, elein, elrho, elv, elq, min_cfl), firstprivate(GAMMA, nel), private(iel), num_threads(2) //Set thread num you want
         {
 #pragma omp for reduction(min \
                           : min_cfl) schedule(static)
@@ -292,6 +246,7 @@ int main(int argc, char *argv[])
 
         error = MPI_Barrier(MPI_COMM_WORLD);
         error = MPI_Allreduce((const void *)&dtLocal, &dt, 1, MPI_DOUBLE, MPI_MIN, MPI_COMM_WORLD);
+        assert(error == MPI_SUCCESS);
 
         // Predict half-step geometry and calculate pressure.
 
@@ -335,11 +290,13 @@ int main(int argc, char *argv[])
                     {
                         error = MPI_Send(&elpSend, 1, MPI_DOUBLE, i, tag_send, MPI_COMM_WORLD);
                         error = MPI_Send(&elqSend, 1, MPI_DOUBLE, i, tag_send, MPI_COMM_WORLD);
+                        assert(error == MPI_SUCCESS);
                     }
                     else if (rank == i)
                     {
                         error = MPI_Recv(&elpGhost, 1, MPI_DOUBLE, i - 1, tag_recv, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
                         error = MPI_Recv(&elqGhost, 1, MPI_DOUBLE, i - 1, tag_recv, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+                        assert(error == MPI_SUCCESS);
                     }
                 }
                 if (rank != 0)
@@ -361,11 +318,13 @@ int main(int argc, char *argv[])
                     {
                         error = MPI_Send(&elpSend, 1, MPI_DOUBLE, i, tag_send, MPI_COMM_WORLD);
                         error = MPI_Send(&elqSend, 1, MPI_DOUBLE, i, tag_send, MPI_COMM_WORLD);
+                        assert(error == MPI_SUCCESS);
                     }
                     else if (rank == i)
                     {
                         error = MPI_Recv(&elpGhost, 1, MPI_DOUBLE, i + 1, tag_recv, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
                         error = MPI_Recv(&elqGhost, 1, MPI_DOUBLE, i + 1, tag_recv, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+                        assert(error == MPI_SUCCESS);
                     }
                 }
                 if (rank != size - 1)
@@ -426,7 +385,8 @@ int main(int argc, char *argv[])
         nnd = nnd - 1;
     }
     MPI_Barrier(MPI_COMM_WORLD);
-    MPI_Allgatherv(&nnd, 1, MPI_INT, counts, countCounts, disp, MPI_INT, MPI_COMM_WORLD);
+    MPI_Gatherv(&nnd, 1, MPI_INT, counts, countCounts, disp, MPI_INT, 0, MPI_COMM_WORLD);
+    assert(error == MPI_SUCCESS);
     if (rank == 0)
     {
         for (auto i = 1; i < size; i++)
@@ -435,10 +395,12 @@ int main(int argc, char *argv[])
             // std::cout << disp[i] << std::endl;
         }
     }
-    MPI_Gatherv(_ndx, nnd, MPI_DOUBLE, ndxCollect, counts, disp, MPI_DOUBLE, 0, MPI_COMM_WORLD);
 
+    MPI_Gatherv(_ndx, nnd, MPI_DOUBLE, ndxCollect, counts, disp, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+    assert(error == MPI_SUCCESS);
     std::fill(disp + 1, disp + size, 1);
-    MPI_Allgatherv(&nel, 1, MPI_INT, counts, countCounts, disp, MPI_INT, MPI_COMM_WORLD);
+    MPI_Gatherv(&nel, 1, MPI_INT, counts, countCounts, disp, MPI_INT, 0, MPI_COMM_WORLD);
+    assert(error == MPI_SUCCESS);
     if (rank == 0)
     {
         for (auto i = 1; i < size; i++)
@@ -446,36 +408,26 @@ int main(int argc, char *argv[])
             disp[i] = counts[i - 1] + disp[i - 1];
         }
     }
-    MPI_Gatherv(elrho.get(), nel, MPI_DOUBLE, elrhoCollect, counts, disp, MPI_DOUBLE, 0, MPI_COMM_WORLD);
-    // std::cout << "up to here" << std::endl;
 
-    // std::clock_t c_end = std::clock();
-    // auto t_end = std::chrono::high_resolution_clock::now();
-    // std::cout << "Original code time usage." << std::endl;
-    // std::cout << std::fixed << "CPU time used: "
-    //           << 1000.0 * (c_end - c_start) / CLOCKS_PER_SEC << " ms\n"
-    //           << "Wall clock time passed: "
-    //           << std::chrono::duration<double, std::milli>(t_end - t_start).count()
-    //           << " ms\n";
+    MPI_Gatherv(elrho.get(), nel, MPI_DOUBLE, elrhoCollect, counts, disp, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+    assert(error == MPI_SUCCESS);
     // XXX --- Uncomment this line to write density data to stdout. ---
     // XXX --- MPI comms needed here to gather data to root process. ---
 
-    // if (rank == 0)
-    // {
-    //     plot(nelTotal, ndxCollect, elrhoCollect);
-    // }
+    if (rank == 0)
+    {
+        // std::clock_t c_end = std::clock();
+        auto t_end = std::chrono::steady_clock::now();
+        // std::cout << "Original code time usage." << std::endl;
+        std::cout << std::fixed
+                  //<< "CPU time used: "
+                  //           << 1000.0 * (c_end - c_start) / CLOCKS_PER_SEC << " ms\n"
+                  //           << "Wall clock time passed: "
+                  << std::chrono::duration<double, std::milli>(t_end - t_start).count()
+                  << " ms\n";
+        plot(nelTotal, ndxCollect, elrhoCollect);
+    }
 
-    // delete[] origin._ndx;
-    // delete[] origin._ndx05;
-    // delete[] origin._ndm;
-    // delete[] origin._ndu;
-    // delete[] origin._ndubar;
-    // delete[] origin._elrho;
-    // delete[] origin._elp;
-    // delete[] origin._elq;
-    // delete[] origin._elein;
-    // delete[] origin._elv;
-    // delete[] origin._elm;
     delete[] _ndx;
     delete[] counts;
     delete[] disp;

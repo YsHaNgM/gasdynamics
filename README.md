@@ -23,3 +23,8 @@ of the order of floating-point round-off may occur depending on compiler, flags
 and system).
 
 This exercise is expected to take 2-3 hours.
+
+
+
+mpirun -n 2 ./gas 100000 takes 308826.750668 ms
+mpirun -n 1 ./gas 100000 takes 393744.256646 ms
