@@ -26,6 +26,33 @@ void plot(int const nel, double const *ndx, double const *el)
     }
 }
 
+void PrepareDistribute(const int nel, const int size, int *&nelIndexList)
+{
+    auto blockSize = int(std::ceil(double(nel) / size));
+    // nel num in each process.
+    for (auto i = 0; i < size; i++)
+    {
+        nelIndexList[i * 2 + 1] = blockSize * (i + 1) - 1;
+        nelIndexList[i * 2] = blockSize * i;
+    }
+    nelIndexList[size * 2 - 1] = nel - 1;
+}
+
+void PrepareNdxSend(int &nnd, double *&ndx)
+{
+    if (nnd)
+    {
+        double *p = new double[nnd - 1];
+
+        std::copy(ndx, ndx + nnd - 1, p);
+
+        std::swap(ndx, p);
+
+        delete[] p;
+    }
+    nnd = nnd - 1;
+}
+
 int main(int argc, char *argv[])
 {
     MPI_Init(&argc, &argv);
@@ -56,21 +83,12 @@ int main(int argc, char *argv[])
     disp[0] = 0;
     std::fill(disp + 1, disp + size, 1);
 
-    int nelIndexes[2]; //start and end indexes for each process
-    int nelIndexList[size * 2];
+    int nelIndexes[2];                     // start and end indexes for each process
+    int *nelIndexList = new int[size * 2]; // send buffer
     int error;
     if (rank == 0)
     {
-        auto blockSize = int(std::ceil(double(nelTotal) / size));
-
-        for (auto i = 0; i < size; i++)
-        {
-            nelIndexList[i * 2 + 1] = blockSize * (i + 1) - 1;
-            nelIndexList[i * 2] = blockSize * i;
-        }
-        nelIndexList[size * 2 - 1] = nelTotal - 1;
-
-        // std::clock_t c_start = std::clock();
+        PrepareDistribute(nelTotal, size, nelIndexList);
     }
     auto t_start = std::chrono::steady_clock::now();
     error = MPI_Scatter((const void *)nelIndexList, 2, MPI_INT,
@@ -372,17 +390,7 @@ int main(int argc, char *argv[])
     auto _ndx = ndx.release();
     if (rank != size - 1)
     {
-        if (nnd)
-        {
-            double *p = new double[nnd - 1];
-
-            std::copy(_ndx, _ndx + nnd - 1, p);
-
-            std::swap(_ndx, p);
-
-            delete[] p;
-        }
-        nnd = nnd - 1;
+        PrepareNdxSend(nnd, _ndx);
     }
     MPI_Barrier(MPI_COMM_WORLD);
     MPI_Gatherv(&nnd, 1, MPI_INT, counts, countCounts, disp, MPI_INT, 0, MPI_COMM_WORLD);
@@ -416,13 +424,8 @@ int main(int argc, char *argv[])
 
     if (rank == 0)
     {
-        // std::clock_t c_end = std::clock();
         auto t_end = std::chrono::steady_clock::now();
-        // std::cout << "Original code time usage." << std::endl;
         std::cout << std::fixed
-                  //<< "CPU time used: "
-                  //           << 1000.0 * (c_end - c_start) / CLOCKS_PER_SEC << " ms\n"
-                  //           << "Wall clock time passed: "
                   << std::chrono::duration<double, std::milli>(t_end - t_start).count()
                   << " ms\n";
         plot(nelTotal, ndxCollect, elrhoCollect);
@@ -434,6 +437,7 @@ int main(int argc, char *argv[])
     delete[] countCounts;
     delete[] ndxCollect;
     delete[] elrhoCollect;
+    delete[] nelIndexList;
     MPI_Finalize();
     //Will drop error in macos, has been known as issue #7516 on ompi git repo.
     return 0;
