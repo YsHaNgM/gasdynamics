@@ -2,12 +2,10 @@
 #include <cassert>
 #include <chrono>
 #include <cmath>
-#include <cstddef>
 #include <iostream>
 #include <limits>
 #include <memory>
 #include <mpi.h>
-#include <vector>
 #ifdef _OPENMP
 #include <omp.h>
 #endif
