@@ -13,7 +13,7 @@
 
 // See README.md for instructions and information.
 
-using ptr = std::shared_ptr<double[]>;
+using ptr = std::shared_ptr<double[]>; // gcc-7 is needed, for shared_ptr [] operand c++17 P0414R2
 
 void plot(int const nel, double const *ndx, double const *el)
 {
