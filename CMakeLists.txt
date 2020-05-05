@@ -5,7 +5,7 @@ option(USE_OPENMP "Enable OpenMP" ON)
 option(USE_MPI "Enable MPI" ON)
 
 # Set language property 
-set(CMAKE_CXX_STANDARD 14)
+set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
@@ -33,9 +33,7 @@ endif(USE_OPENMP)
 
 
 if(USE_MPI)
-
   find_package(MPI REQUIRED)
-
   message("Found MPI, with mpiexec=${MPIEXEC}")
   include_directories(${MPI_CXX_INCLUDE_PATH})
   set(CMAKE_CXX_FLAGS " ${CMAKE_CXX_FLAGS} ${MPI_CXX_COMPILE_FLAGS} ")

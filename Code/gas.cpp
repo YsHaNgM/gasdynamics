@@ -15,6 +15,8 @@
 
 // See README.md for instructions and information.
 
+using ptr = std::shared_ptr<double[]>;
+
 void plot(int const nel, double const *ndx, double const *el)
 {
     for (int iel = 0; iel < nel; iel++)
@@ -26,7 +28,7 @@ void plot(int const nel, double const *ndx, double const *el)
     }
 }
 
-void PrepareDistribute(const int nel, const int size, int *&nelIndexList)
+void PrepareDistribute(const int nel, const int size, std::shared_ptr<int[]> &nelIndexList)
 {
     auto blockSize = int(std::ceil(double(nel) / size));
     // nel num in each process.
@@ -38,17 +40,17 @@ void PrepareDistribute(const int nel, const int size, int *&nelIndexList)
     nelIndexList[size * 2 - 1] = nel - 1;
 }
 
-void PrepareNdxSend(int &nnd, double *&ndx)
+void PrepareNdxSend(int &nnd, ptr &ndx)
 {
     if (nnd)
     {
-        double *p = new double[nnd - 1];
+        ptr p(new double[nnd - 1]);
 
-        std::copy(ndx, ndx + nnd - 1, p);
+        std::copy(ndx.get(), ndx.get() + nnd - 1, p.get()); //<algorithm> library requires * operand, [] for shared_ptr is not partial specialization
 
-        std::swap(ndx, p);
+        ndx.swap(p);
 
-        delete[] p;
+        // delete[] p;
     }
     nnd = nnd - 1;
 }
@@ -74,32 +76,30 @@ int main(int argc, char *argv[])
     const int nelTotal = std::stoi(argv[1]);
     const int nndTotal = nelTotal + 1;
 
-    double *ndxCollect = new double[nndTotal];
-    double *elrhoCollect = new double[nelTotal];
+    ptr ndxCollect(new double[nndTotal]);
+    ptr elrhoCollect(new double[nelTotal]);
     // Prepare some MPI method parameters.
-    int *counts = new int[size];
-    int *disp = new int[size];
-    int *countCounts = new int[size];
-    std::fill(countCounts, countCounts + size, 1);
+    std::shared_ptr<int[]> counts(new int[size]);
+    std::shared_ptr<int[]> disp(new int[size]);
+    std::shared_ptr<int[]> countCounts(new int[size]);
+    std::fill(countCounts.get(), countCounts.get() + size, 1); //<algorithm> library requires * operand, [] for shared_ptr is not partial specialization
     disp[0] = 0;
-    std::fill(disp + 1, disp + size, 1);
+    std::fill(disp.get() + 1, disp.get() + size, 1); //<algorithm> library requires * operand, [] for shared_ptr is not partial specialization
 
-    int nelIndexes[2];                     // start and end indexes for each process
-    int *nelIndexList = new int[size * 2]; // send buffer
+    int nelIndexes[2];                                      // start and end indexes for each process
+    std::shared_ptr<int[]> nelIndexList(new int[size * 2]); // send buffer
     int error;
     if (rank == 0)
     {
         PrepareDistribute(nelTotal, size, nelIndexList);
     }
     auto t_start = std::chrono::steady_clock::now();
-    error = MPI_Scatter((const void *)nelIndexList, 2, MPI_INT,
+    error = MPI_Scatter(nelIndexList.get(), 2, MPI_INT,
                         &nelIndexes, 2, MPI_INT, 0,
                         MPI_COMM_WORLD);
     assert(error == MPI_SUCCESS);
     const int nel = nelIndexes[1] - nelIndexes[0] + 1;
     int nnd = nel + 1;
-
-    using ptr = std::unique_ptr<double[]>;
 
     ptr ndx(new double[nnd]);    // node positions
     ptr ndx05(new double[nnd]);  // half-step node positions
@@ -113,6 +113,7 @@ int main(int argc, char *argv[])
     ptr elv(new double[nel]);    // cell volumes (lengths)
     ptr elm(new double[nel]);    // Lagrangian cell masses
 
+    std::shared_ptr<int[]> sp(new int[2]);
     double elmSend;
     double elpSend;
     double elqSend;
@@ -212,12 +213,11 @@ int main(int argc, char *argv[])
         double min_cfl = std::numeric_limits<double>::max();
 #ifdef _OPENMP
         omp_set_dynamic(0);
-        int iel;
-#pragma omp parallel shared(ndu, elein, elrho, elv, elq, min_cfl), firstprivate(GAMMA, nel), private(iel), num_threads(2) //Set thread num you want
+#pragma omp parallel default(none) shared(min_cfl), firstprivate(GAMMA, nel, elq, ndu, elein, elrho, elv), num_threads(2) //Set thread num you want
         {
 #pragma omp for reduction(min \
                           : min_cfl) schedule(static)
-            for (iel = 0; iel < nel; iel++)
+            for (auto iel = 0; iel < nel; iel++)
             {
                 int const indl = iel;
                 int const indr = iel + 1;
@@ -388,13 +388,13 @@ int main(int argc, char *argv[])
         istep++;
     }
 
-    auto _ndx = ndx.release();
+    // auto _ndx = ndx.get();
     if (rank != size - 1)
     {
-        PrepareNdxSend(nnd, _ndx);
+        PrepareNdxSend(nnd, ndx);
     }
     MPI_Barrier(MPI_COMM_WORLD);
-    MPI_Gatherv(&nnd, 1, MPI_INT, counts, countCounts, disp, MPI_INT, 0, MPI_COMM_WORLD);
+    MPI_Gatherv(&nnd, 1, MPI_INT, counts.get(), countCounts.get(), disp.get(), MPI_INT, 0, MPI_COMM_WORLD);
     assert(error == MPI_SUCCESS);
     if (rank == 0)
     {
@@ -405,10 +405,10 @@ int main(int argc, char *argv[])
         }
     }
 
-    MPI_Gatherv(_ndx, nnd, MPI_DOUBLE, ndxCollect, counts, disp, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+    MPI_Gatherv(ndx.get(), nnd, MPI_DOUBLE, ndxCollect.get(), counts.get(), disp.get(), MPI_DOUBLE, 0, MPI_COMM_WORLD);
     assert(error == MPI_SUCCESS);
-    std::fill(disp + 1, disp + size, 1);
-    MPI_Gatherv(&nel, 1, MPI_INT, counts, countCounts, disp, MPI_INT, 0, MPI_COMM_WORLD);
+    std::fill(disp.get() + 1, disp.get() + size, 1); //<algorithm> library requires * operand, unlike unique_ptr, [] for shared_ptr is not partial specialization
+    MPI_Gatherv(&nel, 1, MPI_INT, counts.get(), countCounts.get(), disp.get(), MPI_INT, 0, MPI_COMM_WORLD);
     assert(error == MPI_SUCCESS);
     if (rank == 0)
     {
@@ -418,7 +418,7 @@ int main(int argc, char *argv[])
         }
     }
 
-    MPI_Gatherv(elrho.get(), nel, MPI_DOUBLE, elrhoCollect, counts, disp, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+    MPI_Gatherv(elrho.get(), nel, MPI_DOUBLE, elrhoCollect.get(), counts.get(), disp.get(), MPI_DOUBLE, 0, MPI_COMM_WORLD);
     assert(error == MPI_SUCCESS);
     // XXX --- Uncomment this line to write density data to stdout. ---
     // XXX --- MPI comms needed here to gather data to root process. ---
@@ -434,13 +434,6 @@ int main(int argc, char *argv[])
         // plot(nelTotal, ndxCollect, elrhoCollect);
     }
 
-    delete[] _ndx;
-    delete[] counts;
-    delete[] disp;
-    delete[] countCounts;
-    delete[] ndxCollect;
-    delete[] elrhoCollect;
-    delete[] nelIndexList;
     MPI_Finalize();
     //Will drop error in macos, has been known as issue #7516 on ompi git repo.
     return 0;
