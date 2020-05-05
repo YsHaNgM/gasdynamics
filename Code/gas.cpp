@@ -60,7 +60,8 @@ int main(int argc, char *argv[])
     int size = 0;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &size);
-
+    double starttime, endtime;
+    starttime = MPI_Wtime();
     if (argc != 2)
     {
         std::cerr << "Usage: " << argv[0] << " <num_cells>" << std::endl;
@@ -424,11 +425,13 @@ int main(int argc, char *argv[])
 
     if (rank == 0)
     {
+        endtime = MPI_Wtime();
+        std::cout << "That took " << endtime - starttime << " seconds." << std::endl;
         auto t_end = std::chrono::steady_clock::now();
         std::cout << std::fixed
                   << std::chrono::duration<double, std::milli>(t_end - t_start).count()
-                  << " ms\n";
-        plot(nelTotal, ndxCollect, elrhoCollect);
+                  << " ms in local.\n";
+        // plot(nelTotal, ndxCollect, elrhoCollect);
     }
 
     delete[] _ndx;

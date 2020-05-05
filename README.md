@@ -25,6 +25,15 @@ and system).
 This exercise is expected to take 2-3 hours.
 
 
-
+omp off:
 mpirun -n 2 ./gas 100000 takes 308826.750668 ms
 mpirun -n 1 ./gas 100000 takes 393744.256646 ms
+
+
+omp on:
+mpirun -n 2 ./gas 100000 takes 356381.796035 ms
+mpirun -n 1 ./gas 100000 takes 448773.837776 ms
+
+
+Using OpenMP seems not benefit in such code, maybe too much data race in reading/writing 
+of same array, which implicitly causes lock. Iteration also rely on previous result.

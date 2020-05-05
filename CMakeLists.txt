@@ -1,13 +1,10 @@
-cmake_minimum_required(VERSION 3.12)
+cmake_minimum_required(VERSION 2.8)
 project(gasdynamics)
-
-
 
 option(USE_OPENMP "Enable OpenMP" ON)
 option(USE_MPI "Enable MPI" ON)
 
-
-
+# Set language property 
 set(CMAKE_CXX_STANDARD 14)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -20,7 +17,6 @@ endif()
 if (NOT (CMAKE_BUILD_TYPE STREQUAL "Release" OR CMAKE_BUILD_TYPE STREQUAL "Debug"))
   message(FATAL_ERROR "Build type \"${CMAKE_BUILD_TYPE}\" is not supported.")
 endif()
-
 
 message("CMAKE_SOURCE_DIR=${CMAKE_SOURCE_DIR}")
 message("CMAKE_BINARY_DIR=${CMAKE_BINARY_DIR}")
@@ -41,9 +37,6 @@ if(USE_MPI)
   find_package(MPI REQUIRED)
 
   message("Found MPI, with mpiexec=${MPIEXEC}")
-
-  # Assume, for the purpose of this example project, that we are doing c++.
-  # If you fork this project, you should set the variables in your chosen language.
   include_directories(${MPI_CXX_INCLUDE_PATH})
   set(CMAKE_CXX_FLAGS " ${CMAKE_CXX_FLAGS} ${MPI_CXX_COMPILE_FLAGS} ")
   set(CMAKE_EXE_LINKER_FLAGS " ${CMAKE_EXE_LINKER_FLAGS} ${MPI_CXX_LINK_FLAGS} ")
