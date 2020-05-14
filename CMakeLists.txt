@@ -1,4 +1,5 @@
-cmake_minimum_required(VERSION 2.8)
+# CMake 3.16 is needed for Apple clang
+cmake_minimum_required(VERSION 3.16) 
 project(gasdynamics)
 
 option(USE_OPENMP "Enable OpenMP" ON)
