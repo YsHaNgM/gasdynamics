@@ -18,8 +18,3 @@ omp on:
 mpirun -n 2 ./gas 100000 takes 356381.796035 ms
 
 mpirun -n 1 ./gas 100000 takes 448773.837776 ms
-
-
-Using OpenMP seems not benefit in such code, maybe too much data race in reading/writing 
-of same array, which implicitly causes lock. Iteration also rely on previous result.
-By changing omp parameters from shared into private, preformance improved.
