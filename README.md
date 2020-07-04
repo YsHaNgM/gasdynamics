@@ -1,3 +1,5 @@
+This repo trys to utilise C++17 P0414R2 feature to verify and optimize usage in OpenMP/MPI.
+
 `gas.cpp` contains a simple 1D Lagrangian gas dynamics code.
 
 The provided `plot()` function can be called to print CSV output to standard
